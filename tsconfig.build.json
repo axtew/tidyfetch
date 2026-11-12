@@ -1,0 +1,12 @@
+{
+  // The published types: library sources only, tests stay out.
+  // `isolatedDeclarations` requires an explicit type on every export, so the .d.ts
+  // never holds a type expanded at build time.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "isolatedDeclarations": true
+  },
+  "include": ["src"],
+  "exclude": ["src/**/__tests__"]
+}

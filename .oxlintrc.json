@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "vitest"],
+  "jsPlugins": ["eslint-plugin-simple-import-sort"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "eqeqeq": ["error", "always"],
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    "simple-import-sort/imports": "error",
+    "simple-import-sort/exports": "error"
+  },
+  "ignorePatterns": ["dist"],
+  "overrides": [
+    {
+      "files": ["**/*.test-d.ts"],
+      "rules": {
+        "vitest/expect-expect": "off"
+      }
+    }
+  ]
+}
