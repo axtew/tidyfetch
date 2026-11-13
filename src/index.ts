@@ -1,2 +1,10 @@
-// Placeholder entry point: the client arrives in the next phase.
-export const VERSION = "0.0.0";
+export {
+  type BodylessRequestOptions,
+  type ClientOptions,
+  createClient,
+  type FetchFunction,
+  type HttpClient,
+  type RequestOptions,
+} from "./client";
+export type { HeadersOption, Query, QueryValue } from "./request";
+export type { HttpResponse } from "./response";

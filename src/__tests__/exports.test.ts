@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import * as entry from "../index";
 
 describe("entry point", () => {
-  it("loads", () => {
-    expect(entry).toBeTypeOf("object");
+  it("exports createClient and nothing else at runtime", () => {
+    expect(Object.keys(entry)).toEqual(["createClient"]);
+    expect(entry.createClient).toBeTypeOf("function");
   });
 });
