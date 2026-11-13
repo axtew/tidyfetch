@@ -1,6 +1,7 @@
 import { NetworkError, TimeoutError } from "../errors";
 import { buildUrl, type HttpRequest, mergeHeaders, prepareBody, resolveHeaders } from "../request";
 import { type HttpResponse, type RawBody, readBody, toHttpResponse } from "../response";
+import { createRefresh } from "./_refresh";
 import { combineSignals, DEFAULT_TIMEOUT, startDeadline } from "./_signal";
 import type { ClientOptions, HttpClient, RequestOptions } from "./_types";
 
@@ -9,6 +10,8 @@ type FetchInit = RequestInit & { duplex?: "half" };
 
 export function createClient(options: ClientOptions): HttpClient {
   const { baseUrl, credentials, fetch: customFetch } = options;
+  const sendWithRefresh =
+    options.refresh === undefined ? undefined : createRefresh(options.refresh, options.skipRefresh);
 
   function callFetch(url: string, init: FetchInit): Promise<Response> {
     // Called as a plain function, not as `options.fetch(...)`: the browser `fetch`
@@ -68,7 +71,16 @@ export function createClient(options: ClientOptions): HttpClient {
   ): Promise<HttpResponse<T>> {
     const url = buildUrl(baseUrl, path, requestOptions.query);
     // `fetch` normalizes the case of GET, POST, PUT, DELETE, but not of PATCH.
-    return attempt<T>(method.toUpperCase(), url, requestOptions);
+    const upperMethod = method.toUpperCase();
+    // Every call is a fresh attempt: client headers, body and timeout are prepared anew.
+    const send = (): Promise<HttpResponse<T>> => attempt<T>(upperMethod, url, requestOptions);
+
+    if (sendWithRefresh === undefined) return send();
+    return sendWithRefresh(send, {
+      signal: requestOptions.signal,
+      resendable: !(requestOptions.body instanceof ReadableStream),
+      skip: requestOptions.skipRefresh === true,
+    });
   }
 
   return {

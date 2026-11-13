@@ -102,3 +102,60 @@ export async function rejectionOf<E>(
   }
   return error;
 }
+
+export interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+/** A promise settled from the outside, to put steps of a test in a fixed order. */
+export function deferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+/** Lets every pending promise callback run: resolves after the current macrotask. */
+export function flush(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+export interface SentRequest {
+  url: string;
+  method: string;
+  headers: Headers;
+  body: RequestInit["body"];
+  credentials: RequestCredentials | undefined;
+}
+
+/**
+ * A fake server behind a `fetch`: `handle` answers each request, possibly later.
+ * Records what was sent.
+ */
+export function fakeServer(handle: (request: SentRequest) => Response | Promise<Response>): {
+  fetch: FetchFunction;
+  sent: SentRequest[];
+  sentTo: (path: string) => SentRequest[];
+} {
+  const sent: SentRequest[] = [];
+  const fetch: FetchFunction = async (url, init) => {
+    const request: SentRequest = {
+      url,
+      method: init.method ?? "GET",
+      headers: new Headers(init.headers),
+      body: init.body,
+      credentials: init.credentials,
+    };
+    sent.push(request);
+    return handle(request);
+  };
+  const sentTo = (path: string): SentRequest[] => sent.filter((request) => request.url === path);
+  return { fetch, sent, sentTo };
+}
+
+export const json = (data: unknown, status = 200): Response =>
+  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
+
+export const unauthorized = (): Response => json({ message: "token expired" }, 401);

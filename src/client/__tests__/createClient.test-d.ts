@@ -2,11 +2,16 @@ import { describe, expectTypeOf, test } from "vitest";
 
 import {
   createClient,
+  type FetchFunction,
+  type HeadersOption,
+  type HttpClient,
   HttpError,
   type HttpRequest,
   type HttpResponse,
   NetworkError,
   ParseError,
+  type RequestHeaders,
+  type ResponseBodyType,
   TimeoutError,
 } from "../..";
 
@@ -16,6 +21,9 @@ interface User {
 }
 
 const api = createClient({ baseUrl: "/api" });
+
+// A value typed `X | undefined`, as an optional parameter passed through is.
+const maybe = <T>(value: T): T | undefined => value;
 
 describe("client options", () => {
   test("baseUrl is required", () => {
@@ -193,5 +201,84 @@ describe("errors", () => {
       expectTypeOf(error.name).toEqualTypeOf<"ParseError">();
       expectTypeOf(error.response).toEqualTypeOf<Response>();
     }
+  });
+});
+
+describe("refresh options", () => {
+  test("refresh resolves a boolean, skipRefresh gets the request", () => {
+    createClient({
+      baseUrl: "/api",
+      refresh: async () => true,
+      skipRefresh: (request) => {
+        expectTypeOf(request).toEqualTypeOf<HttpRequest>();
+        return request.url.includes("/auth/");
+      },
+    });
+    // @ts-expect-error refresh returns a promise
+    createClient({ baseUrl: "/api", refresh: () => true });
+    // @ts-expect-error refresh resolves true or false, not a token
+    createClient({ baseUrl: "/api", refresh: async () => "token" });
+    // @ts-expect-error skipRefresh on the client is a function
+    createClient({ baseUrl: "/api", skipRefresh: true });
+  });
+
+  test("a request takes skipRefresh: true", () => {
+    void api.get("/x", { skipRefresh: true });
+    void api.post("/auth/refresh", { skipRefresh: true, body: {} });
+    // @ts-expect-error skipRefresh on a request is a boolean
+    void api.get("/x", { skipRefresh: () => true });
+  });
+
+  test("refresh may call the same client", () => {
+    const client: HttpClient = createClient({
+      baseUrl: "/api",
+      refresh: async () => {
+        await client.post("/auth/refresh", { skipRefresh: true });
+        return true;
+      },
+    });
+  });
+});
+
+describe("optional options take undefined", () => {
+  test("request options", () => {
+    const signal = maybe(new AbortController().signal);
+    const timeout = maybe(1_000);
+    const headers = maybe<RequestHeaders>({ a: "1" });
+    const responseType = maybe<ResponseBodyType>("json");
+    const skipRefresh = maybe(true);
+    const query = maybe({ page: 1 });
+    const body = maybe<unknown>({ a: 1 });
+
+    void api.get("/x", { signal, timeout, headers, responseType, skipRefresh, query });
+    void api.post("/x", { signal, timeout, headers, responseType, skipRefresh, query, body });
+    void api.request("PATCH", "/x", { signal, body });
+  });
+
+  test("the case from a service: an optional signal passed through", () => {
+    interface Filters {
+      page?: number;
+    }
+    function getSites(params?: Filters, signal?: AbortSignal) {
+      return api.get<User[]>("/sites", { query: params, signal });
+    }
+    expectTypeOf(getSites()).resolves.toEqualTypeOf<HttpResponse<User[]>>();
+  });
+
+  test("client options", () => {
+    createClient({
+      baseUrl: "/api",
+      headers: maybe<HeadersOption>(() => ({ a: "1" })),
+      credentials: maybe<RequestCredentials>("include"),
+      timeout: maybe(0),
+      fetch: maybe<FetchFunction>(globalThis.fetch),
+      refresh: maybe(async () => true),
+      skipRefresh: maybe((request: HttpRequest) => request.url === "/login"),
+    });
+  });
+
+  test("baseUrl stays required", () => {
+    // @ts-expect-error baseUrl is required and takes no undefined
+    createClient({ baseUrl: maybe("/api") });
   });
 });

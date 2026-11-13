@@ -6,6 +6,8 @@ export interface HttpErrorInit {
   request: HttpRequest;
   response: Response;
   data: unknown;
+  /** Why the request was not retried, when there is a reason: the exception thrown by `refresh`. */
+  cause?: unknown;
 }
 
 /** The server answered with a status outside 200-299. */
@@ -19,10 +21,11 @@ export class HttpError extends Error {
   readonly response: Response;
   readonly request: HttpRequest;
 
-  constructor({ request, response, data }: HttpErrorInit) {
+  constructor({ request, response, data, cause }: HttpErrorInit) {
     // HTTP/2 has no status text, so it may be empty.
     const status = `${response.status} ${response.statusText}`.trim();
-    super(`${label(request)} failed with ${status}`);
+    // No `cause` property at all unless there is one, as with a plain `new Error()`.
+    super(`${label(request)} failed with ${status}`, cause === undefined ? undefined : { cause });
     this.status = response.status;
     this.statusText = response.statusText;
     this.data = data;
