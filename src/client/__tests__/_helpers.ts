@@ -26,3 +26,79 @@ export function recordingFetch(
   };
   return { fetch, calls, last };
 }
+
+/** Rejects like the real `fetch` on an aborted signal: with the signal's reason. */
+function onAbort(signal: AbortSignal | null | undefined, reject: (reason: unknown) => void): void {
+  if (!signal) return;
+  if (signal.aborted) {
+    reject(signal.reason);
+    return;
+  }
+  signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+}
+
+/**
+ * A `fetch` that answers after `delay` ms and honours `init.signal` like the
+ * real one. `delay` may depend on the URL.
+ */
+export function delayedFetch(
+  delay: number | ((url: string) => number),
+  respond: () => Response = () => new Response("ok"),
+): FetchFunction {
+  return (url, init) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => resolve(respond()),
+        typeof delay === "number" ? delay : delay(url),
+      );
+      onAbort(init.signal, (reason) => {
+        clearTimeout(timer);
+        reject(reason);
+      });
+    });
+}
+
+/**
+ * A `fetch` whose headers arrive at once and whose body sends `first`, then
+ * `rest` after `restDelay` ms. Like the real one, an abort errors the body
+ * stream with the signal's reason.
+ */
+export function slowBodyFetch(
+  first: string,
+  rest: string,
+  restDelay: number,
+  contentType = "application/json",
+): FetchFunction {
+  return (_url, init) => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(first));
+        const timer = setTimeout(() => {
+          controller.enqueue(encoder.encode(rest));
+          controller.close();
+        }, restDelay);
+        onAbort(init.signal, (reason) => {
+          clearTimeout(timer);
+          controller.error(reason);
+        });
+      },
+    });
+    return Promise.resolve(new Response(body, { headers: { "content-type": contentType } }));
+  };
+}
+
+/** Awaits a promise that must reject with an instance of `errorClass`, and returns it typed. */
+export async function rejectionOf<E>(
+  promise: Promise<unknown>,
+  errorClass: abstract new (...args: never[]) => E,
+): Promise<E> {
+  const error = await promise.then(
+    () => new Error("expected a rejection, the promise resolved"),
+    (reason: unknown) => reason,
+  );
+  if (!(error instanceof errorClass)) {
+    throw new Error(`expected a rejection with ${errorClass.name}, got ${String(error)}`);
+  }
+  return error;
+}

@@ -53,7 +53,7 @@ describe("sending", () => {
   });
 });
 
-describe("response (minimal until response parsing and errors arrive)", () => {
+describe("response", () => {
   it("returns the response shape with JSON data", async () => {
     const { fetch } = recordingFetch(
       () =>

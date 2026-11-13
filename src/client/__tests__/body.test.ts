@@ -92,3 +92,72 @@ describe("A3: the body is prepared the same way for every method", () => {
     expect(last().headers.has("content-type")).toBe(false);
   });
 });
+
+function makeForm(): FormData {
+  const data = new FormData();
+  data.append("file", new Blob(["x"]), "x.txt");
+  return data;
+}
+
+describe("FormData never keeps a set Content-Type", () => {
+  it("drops the one from the client headers", async () => {
+    const { fetch, last } = recordingFetch();
+    const api = createClient({
+      baseUrl: "/api",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer t" },
+      fetch,
+    });
+
+    await api.post("/upload", { body: makeForm() });
+
+    expect(last().headers.has("content-type")).toBe(false);
+    expect(last().headers.get("authorization")).toBe("Bearer t");
+  });
+
+  it("drops the one from the request headers", async () => {
+    const { fetch, last } = recordingFetch();
+    const api = createClient({ baseUrl: "/api", fetch });
+
+    await api.post("/upload", {
+      body: makeForm(),
+      headers: { "content-type": "multipart/form-data" },
+    });
+
+    expect(last().headers.has("content-type")).toBe(false);
+  });
+
+  it("lets fetch add the multipart type with the boundary", async () => {
+    const { fetch, last } = recordingFetch();
+    const api = createClient({
+      baseUrl: "http://localhost",
+      headers: { "Content-Type": "application/json" },
+      fetch,
+    });
+
+    await api.post("/upload", { body: makeForm() });
+
+    const request = new Request(last().url, last().init);
+    expect(request.headers.get("content-type")).toMatch(/^multipart\/form-data; boundary=/);
+  });
+});
+
+describe("a ReadableStream body", () => {
+  it('sets duplex: "half", which fetch requires for a stream', async () => {
+    const { fetch, last } = recordingFetch();
+    const api = createClient({ baseUrl: "http://localhost", fetch });
+
+    await api.post("/upload", { body: new ReadableStream() });
+
+    expect(last().init).toMatchObject({ duplex: "half" });
+    expect(() => new Request(last().url, last().init)).not.toThrow();
+  });
+
+  it("sets no duplex for other bodies", async () => {
+    const { fetch, last } = recordingFetch();
+    const api = createClient({ baseUrl: "/api", fetch });
+
+    await api.post("/x", { body: "text" });
+
+    expect("duplex" in last().init).toBe(false);
+  });
+});

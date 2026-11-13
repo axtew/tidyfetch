@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { createClient, type Query } from "../..";
-import { recordingFetch } from "./_helpers";
+import { createClient, type FetchFunction, type Query } from "../..";
+import { recordingFetch, rejectionOf } from "./_helpers";
 
 async function urlFor(baseUrl: string, path: string, query?: Query): Promise<string> {
   const { fetch, last } = recordingFetch();
@@ -85,5 +85,48 @@ describe("A9: query values", () => {
     const url = await urlFor("/api", "/x", { q: "a&b=c d/é?#", "k[]": "1" });
     expect(url).toBe("/api/x?q=a%26b%3Dc+d%2F%C3%A9%3F%23&k%5B%5D=1");
     expect(new URLSearchParams(url.split("?")[1]).get("q")).toBe("a&b=c d/é?#");
+  });
+});
+
+describe("query values the types cannot check", () => {
+  interface Filters {
+    page: number;
+    tags?: string[];
+  }
+
+  it("accepts an interface-typed object", async () => {
+    const filters: Filters = { page: 2, tags: ["a", "b"] };
+    expect(await urlFor("/api", "/x", { ...filters })).toBe("/api/x?page=2&tags=a&tags=b");
+
+    const { fetch, last } = recordingFetch();
+    await createClient({ baseUrl: "/api", fetch }).get<string[]>("/x", { query: filters });
+    expect(last().url).toBe("/api/x?page=2&tags=a&tags=b");
+  });
+
+  it.each<[string, unknown]>([
+    ["a Date", new Date(0)],
+    ["a nested object", { a: 1 }],
+    ["an object in an array", [1, { a: 1 }]],
+    ["a bigint", 1n],
+    ["a function", () => 1],
+    ["a symbol", Symbol("s")],
+  ])("throws TypeError naming the key for %s, before calling fetch", async (_name, value) => {
+    const fetch = vi.fn<FetchFunction>();
+    const api = createClient({ baseUrl: "/api", fetch });
+    // Typed as `object`, as an explicit `T` would leave it: the types let it through.
+    const query: object = { ok: 1, bad: value };
+
+    const error = await rejectionOf(api.get("/x", { query }), TypeError);
+
+    expect(error.message).toContain('"bad"');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("throws TypeError for a query that is not an object (untyped callers)", async () => {
+    const api = createClient({ baseUrl: "/api", fetch: vi.fn<FetchFunction>() });
+    const query: unknown = "page=1";
+
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    await expect(api.get("/x", { query: query as object })).rejects.toThrow(TypeError);
   });
 });

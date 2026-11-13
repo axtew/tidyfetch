@@ -116,3 +116,48 @@ describe("B7: client headers as a function", () => {
     expect(last().headers.get("x-trace")).toBe("1");
   });
 });
+
+describe("undefined in the request headers removes a client header", () => {
+  it("drops Authorization for one request, keeps the rest", async () => {
+    const { fetch, calls } = recordingFetch();
+    const api = createClient({
+      baseUrl: "/api",
+      headers: { Authorization: "Bearer t", Accept: "application/json" },
+      fetch,
+    });
+
+    await api.put("https://bucket.s3.amazonaws.com/upload?sig=1", {
+      headers: { Authorization: undefined },
+    });
+    await api.get("/me");
+
+    expect(calls[0]?.headers.has("authorization")).toBe(false);
+    expect(calls[0]?.headers.get("accept")).toBe("application/json");
+    expect(calls[1]?.headers.get("authorization")).toBe("Bearer t");
+  });
+
+  it("matches the name case-insensitively, also for function headers", async () => {
+    const { fetch, last } = recordingFetch();
+    const api = createClient({
+      baseUrl: "/api",
+      headers: () => ({ "X-Csrf-Token": "abc", Authorization: "Bearer t" }),
+      fetch,
+    });
+
+    await api.post("/x", { headers: { "x-csrf-token": undefined, AUTHORIZATION: undefined } });
+
+    expect([...last().headers.keys()]).toEqual([]);
+  });
+
+  it("is a no-op for a header the client does not send", async () => {
+    const { fetch, last } = recordingFetch();
+    const api = createClient({ baseUrl: "/api", headers: { Accept: "text/plain" }, fetch });
+
+    await api.get("/x", { headers: { "X-Missing": undefined, "X-Trace": "1" } });
+
+    expect([...last().headers]).toEqual([
+      ["accept", "text/plain"],
+      ["x-trace", "1"],
+    ]);
+  });
+});

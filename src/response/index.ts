@@ -1,1 +1,7 @@
-export { type HttpResponse, readResponse } from "./_response";
+export {
+  type HttpResponse,
+  type RawBody,
+  readBody,
+  type ResponseBodyType,
+  toHttpResponse,
+} from "./_response";

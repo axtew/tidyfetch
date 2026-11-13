@@ -1,6 +1,14 @@
 import { describe, expectTypeOf, test } from "vitest";
 
-import { createClient, type HttpResponse } from "../..";
+import {
+  createClient,
+  HttpError,
+  type HttpRequest,
+  type HttpResponse,
+  NetworkError,
+  ParseError,
+  TimeoutError,
+} from "../..";
 
 interface User {
   id: number;
@@ -53,6 +61,90 @@ describe("request options", () => {
     void api.get("/x", { query: { from: new Date() } });
   });
 
+  test("query takes an interface-typed object", () => {
+    interface Filters {
+      page: number;
+      search?: string;
+      ids: readonly number[];
+      archived: boolean | null;
+    }
+    const filters: Filters = { page: 1, ids: [1], archived: null };
+    void api.get("/x", { query: filters });
+    void api.post("/x", { query: filters, body: {} });
+    void api.request("GET", "/x", { query: filters });
+    // A service method passing its optional params through.
+    const getSites = (params?: Filters) => api.get<User[]>("/sites", { query: params });
+    const findSites = (params?: Filters) => api.get("/sites", { query: params });
+    void getSites();
+    void findSites();
+  });
+
+  test("query takes a type alias and an object literal", () => {
+    type Filters = { page: number; tags: string[] };
+    const filters: Filters = { page: 1, tags: [] };
+    void api.get("/x", { query: filters });
+    void api.get("/x", { query: { page: 1, tags: ["a"] } });
+  });
+
+  test("query takes an interface also with the response type given explicitly", () => {
+    interface Filters {
+      page: number;
+    }
+    const filters: Filters = { page: 1 };
+    void api.get<User>("/x", { query: filters });
+    void api.delete<User>("/x", { query: filters });
+  });
+
+  test("a wrong value in an interface-typed query fails where the query is inferred", () => {
+    interface WithDate {
+      from: Date;
+    }
+    interface Nested {
+      filter: { a: number };
+    }
+    const withDate: WithDate = { from: new Date() };
+    const nested: Nested = { filter: { a: 1 } };
+    // @ts-expect-error a Date is not a query value
+    void api.get("/x", { query: withDate });
+    // @ts-expect-error a nested object is not a query value
+    void api.patch("/x", { query: nested });
+    // @ts-expect-error an array of objects is not a query value
+    void api.get("/x", { query: { ids: [{ id: 1 }] } });
+  });
+
+  test("query is an object, not a string", () => {
+    // @ts-expect-error a ready query string is not accepted
+    void api.get("/x", { query: "page=1" });
+  });
+
+  test("request headers may remove a client header with undefined, in the object form only", () => {
+    void api.get("/x", { headers: { Authorization: undefined } });
+    void api.get("/x", { headers: new Headers() });
+    void api.get("/x", { headers: [["a", "1"]] });
+    // @ts-expect-error a pair needs a string value
+    void api.get("/x", { headers: [["a", undefined]] });
+    // @ts-expect-error a header value is a string
+    void api.get("/x", { headers: { a: 1 } });
+  });
+
+  test("client headers take no undefined", () => {
+    // @ts-expect-error undefined only removes a client header from a request
+    createClient({ baseUrl: "/api", headers: { a: undefined } });
+  });
+
+  test("timeout, signal and responseType", () => {
+    createClient({ baseUrl: "/api", timeout: 0 });
+    void api.get("/x", {
+      timeout: 5_000,
+      signal: new AbortController().signal,
+      responseType: "arrayBuffer",
+    });
+    // @ts-expect-error not a response type
+    void api.get("/x", { responseType: "document" });
+    // @ts-expect-error timeout is in milliseconds
+    void api.get("/x", { timeout: "5s" });
+  });
+
   test("an unknown option fails, and get takes no body", () => {
     // @ts-expect-error not an option
     void api.post("/x", { unknownOption: true });
@@ -76,5 +168,30 @@ describe("response data", () => {
     expectTypeOf(api.request<User[]>("GET", "/users")).resolves.toEqualTypeOf<
       HttpResponse<User[]>
     >();
+  });
+});
+
+describe("errors", () => {
+  test("narrow with instanceof and carry typed fields", () => {
+    const error: unknown = new Error("x");
+    if (error instanceof HttpError) {
+      expectTypeOf(error.name).toEqualTypeOf<"HttpError">();
+      expectTypeOf(error.status).toBeNumber();
+      expectTypeOf(error.data).toBeUnknown();
+      expectTypeOf(error.response).toEqualTypeOf<Response>();
+      expectTypeOf(error.request).toEqualTypeOf<HttpRequest>();
+    }
+    if (error instanceof TimeoutError) {
+      expectTypeOf(error.name).toEqualTypeOf<"TimeoutError">();
+      expectTypeOf(error.timeout).toBeNumber();
+    }
+    if (error instanceof NetworkError) {
+      expectTypeOf(error.name).toEqualTypeOf<"NetworkError">();
+      expectTypeOf(error.request.headers).toEqualTypeOf<Headers>();
+    }
+    if (error instanceof ParseError) {
+      expectTypeOf(error.name).toEqualTypeOf<"ParseError">();
+      expectTypeOf(error.response).toEqualTypeOf<Response>();
+    }
   });
 });

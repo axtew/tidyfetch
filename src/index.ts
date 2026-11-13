@@ -6,5 +6,22 @@ export {
   type HttpClient,
   type RequestOptions,
 } from "./client";
-export type { HeadersOption, Query, QueryValue } from "./request";
-export type { HttpResponse } from "./response";
+export {
+  HttpError,
+  type HttpErrorInit,
+  NetworkError,
+  type NetworkErrorInit,
+  ParseError,
+  type ParseErrorInit,
+  TimeoutError,
+  type TimeoutErrorInit,
+} from "./errors";
+export type {
+  HeadersOption,
+  HttpRequest,
+  Query,
+  QueryObject,
+  QueryValue,
+  RequestHeaders,
+} from "./request";
+export type { HttpResponse, ResponseBodyType } from "./response";
