@@ -5,4 +5,5 @@ export type {
   FetchFunction,
   HttpClient,
   RequestOptions,
+  ResponseData,
 } from "./_types";

@@ -1,5 +1,7 @@
+import type { RequestError } from "../errors";
 import type { HeadersOption, HttpRequest, QueryObject, RequestHeaders } from "../request";
 import type { HttpResponse, ResponseBodyType } from "../response";
+import type { StandardSchemaV1 } from "../schema";
 
 /** A `fetch` implementation: the global one by default. */
 export type FetchFunction = (input: string, init: RequestInit) => Promise<Response>;
@@ -60,10 +62,39 @@ export interface ClientOptions {
    * endpoint. Called with the request that got the 401.
    */
   skipRefresh?: ((request: HttpRequest) => boolean) | undefined;
+
+  // The hooks only observe. Each is called without waiting for it, what it
+  // returns is ignored, and it cannot change the request or its result.
+
+  /**
+   * Before every attempt, the retry after a refresh included. The headers are a
+   * copy: to send a header, use the `headers` option. A throw or a rejection here
+   * does not affect the request; it is reported as uncaught (`reportError`).
+   */
+  onRequest?: ((request: HttpRequest) => unknown) | undefined;
+  /**
+   * Once per request, on the final success, with `data` already through the
+   * `schema`. A throw or a rejection is reported, as in `onRequest`.
+   */
+  onResponse?: ((response: HttpResponse, request: HttpRequest) => unknown) | undefined;
+  /**
+   * Once per request, with the error it finally fails with: a 401 cured by a
+   * refresh never gets here. Not called when the caller cancels the request, nor
+   * for errors thrown before it is sent (by a `headers` function, a query or a
+   * body that cannot be sent). A throw or a rejection is reported, as in `onRequest`.
+   */
+  onError?: ((error: RequestError, request: HttpRequest) => unknown) | undefined;
 }
 
-/** Options of a request without a body (`get`). */
-export interface BodylessRequestOptions<Q = object> {
+/**
+ * Options of a request without a body (`get`). `R` and `S` are the types of
+ * `responseType` and `schema`, so that the type of `data` can follow them.
+ */
+export interface BodylessRequestOptions<
+  Q = object,
+  R extends ResponseBodyType | undefined = ResponseBodyType | undefined,
+  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+> {
   /**
    * Added to the URL: an object (an `interface` type too) or `URLSearchParams`.
    * Values are strings, numbers, booleans or arrays of them; an array repeats
@@ -84,15 +115,30 @@ export interface BodylessRequestOptions<Q = object> {
    */
   signal?: AbortSignal | undefined;
   /**
-   * How to read a successful body; by the content type when not set. With
-   * `"stream"` the timeout stops once the headers arrive, the caller's signal keeps working.
+   * How to read a successful body; by the content type when not set. Then, and
+   * with `"json"`, a missing or empty body gives `undefined`. `"text"` gives a
+   * `string`, `"blob"` a `Blob`, `"arrayBuffer"` an `ArrayBuffer`, `"stream"`
+   * the unread `ReadableStream`, each of them empty when there is no body. With
+   * `"stream"` the timeout stops once the headers arrive, the caller's signal
+   * keeps working.
    */
-  responseType?: ResponseBodyType | undefined;
+  responseType?: R;
+  /**
+   * A Standard Schema (Zod, Valibot, ArkType and others) that a successful
+   * `data` must pass. `data` is then the schema's output, so its transforms and
+   * defaults apply; a mismatch throws `SchemaError`. The schema gets `data` as
+   * read, after `responseType`. Error bodies are not checked.
+   */
+  schema?: S;
   /** `true`: a 401 of this request never triggers a refresh. For the requests `refresh` sends. */
   skipRefresh?: boolean | undefined;
 }
 
-export interface RequestOptions<Q = object> extends BodylessRequestOptions<Q> {
+export interface RequestOptions<
+  Q = object,
+  R extends ResponseBodyType | undefined = ResponseBodyType | undefined,
+  S extends StandardSchemaV1 | undefined = StandardSchemaV1 | undefined,
+> extends BodylessRequestOptions<Q, R, S> {
   /**
    * `string`, `Blob`, `ArrayBuffer`, typed arrays, `FormData`, `URLSearchParams` and
    * `ReadableStream` are sent as is. Anything else is sent as JSON with
@@ -103,34 +149,93 @@ export interface RequestOptions<Q = object> extends BodylessRequestOptions<Q> {
   body?: unknown;
 }
 
-// `Q` is inferred from `query` and every value is checked against the query value
-// types. With `T` given explicitly `Q` is not inferred and falls back to `object`:
-// any object passes the types and is checked at run time.
+/**
+ * The type of `data`: the schema's output when there is a `schema`, otherwise
+ * by `responseType`, otherwise the caller's `T` (by default `unknown`).
+ */
+export type ResponseData<
+  T,
+  R extends ResponseBodyType | undefined,
+  S extends StandardSchemaV1 | undefined,
+> = S extends StandardSchemaV1
+  ? StandardSchemaV1.InferOutput<S>
+  : R extends "text"
+    ? string
+    : R extends "blob"
+      ? Blob
+      : R extends "arrayBuffer"
+        ? ArrayBuffer
+        : R extends "stream"
+          ? ReadableStream<Uint8Array>
+          : T;
+
+/**
+ * The client. Every method takes the same type parameters:
+ * - `T` is the type of JSON `data`: a claim about the server, not checked.
+ * - `Q` is inferred from `query`, and every value is checked against the query
+ *   value types.
+ * - `R` and `S` are inferred from `responseType` and `schema`.
+ *
+ * A `T` given explicitly turns the inference of the others off: `Q` falls back
+ * to `object` (any object passes the types and is checked at run time), and
+ * only `responseType: "json"` and no `schema` are accepted. With a
+ * `responseType` or a `schema`, leave `T` out: the type of `data` follows them.
+ */
 export interface HttpClient {
   /** Any method; the other methods are shortcuts for it. The method name is upper-cased. */
-  request<T = unknown, Q extends object & QueryObject<Q> = object>(
+  request<
+    T = unknown,
+    Q extends object & QueryObject<Q> = object,
+    R extends ResponseBodyType | undefined = "json" | undefined,
+    S extends StandardSchemaV1 | undefined = undefined,
+  >(
     method: string,
     path: string,
-    options?: RequestOptions<Q>,
-  ): Promise<HttpResponse<T>>;
-  get<T = unknown, Q extends object & QueryObject<Q> = object>(
+    options?: RequestOptions<Q, R, S>,
+  ): Promise<HttpResponse<ResponseData<T, R, S>>>;
+  get<
+    T = unknown,
+    Q extends object & QueryObject<Q> = object,
+    R extends ResponseBodyType | undefined = "json" | undefined,
+    S extends StandardSchemaV1 | undefined = undefined,
+  >(
     path: string,
-    options?: BodylessRequestOptions<Q>,
-  ): Promise<HttpResponse<T>>;
-  post<T = unknown, Q extends object & QueryObject<Q> = object>(
+    options?: BodylessRequestOptions<Q, R, S>,
+  ): Promise<HttpResponse<ResponseData<T, R, S>>>;
+  post<
+    T = unknown,
+    Q extends object & QueryObject<Q> = object,
+    R extends ResponseBodyType | undefined = "json" | undefined,
+    S extends StandardSchemaV1 | undefined = undefined,
+  >(
     path: string,
-    options?: RequestOptions<Q>,
-  ): Promise<HttpResponse<T>>;
-  put<T = unknown, Q extends object & QueryObject<Q> = object>(
+    options?: RequestOptions<Q, R, S>,
+  ): Promise<HttpResponse<ResponseData<T, R, S>>>;
+  put<
+    T = unknown,
+    Q extends object & QueryObject<Q> = object,
+    R extends ResponseBodyType | undefined = "json" | undefined,
+    S extends StandardSchemaV1 | undefined = undefined,
+  >(
     path: string,
-    options?: RequestOptions<Q>,
-  ): Promise<HttpResponse<T>>;
-  patch<T = unknown, Q extends object & QueryObject<Q> = object>(
+    options?: RequestOptions<Q, R, S>,
+  ): Promise<HttpResponse<ResponseData<T, R, S>>>;
+  patch<
+    T = unknown,
+    Q extends object & QueryObject<Q> = object,
+    R extends ResponseBodyType | undefined = "json" | undefined,
+    S extends StandardSchemaV1 | undefined = undefined,
+  >(
     path: string,
-    options?: RequestOptions<Q>,
-  ): Promise<HttpResponse<T>>;
-  delete<T = unknown, Q extends object & QueryObject<Q> = object>(
+    options?: RequestOptions<Q, R, S>,
+  ): Promise<HttpResponse<ResponseData<T, R, S>>>;
+  delete<
+    T = unknown,
+    Q extends object & QueryObject<Q> = object,
+    R extends ResponseBodyType | undefined = "json" | undefined,
+    S extends StandardSchemaV1 | undefined = undefined,
+  >(
     path: string,
-    options?: RequestOptions<Q>,
-  ): Promise<HttpResponse<T>>;
+    options?: RequestOptions<Q, R, S>,
+  ): Promise<HttpResponse<ResponseData<T, R, S>>>;
 }

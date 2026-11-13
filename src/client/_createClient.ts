@@ -1,6 +1,8 @@
-import { NetworkError, TimeoutError } from "../errors";
+import { isRequestError, NetworkError, TimeoutError } from "../errors";
 import { buildUrl, type HttpRequest, mergeHeaders, prepareBody, resolveHeaders } from "../request";
 import { type HttpResponse, type RawBody, readBody, toHttpResponse } from "../response";
+import { validate } from "../schema";
+import { notify } from "./_hooks";
 import { createRefresh } from "./_refresh";
 import { combineSignals, DEFAULT_TIMEOUT, startDeadline } from "./_signal";
 import type { ClientOptions, HttpClient, RequestOptions } from "./_types";
@@ -8,8 +10,16 @@ import type { ClientOptions, HttpClient, RequestOptions } from "./_types";
 // The DOM types lack `duplex`, which `fetch` requires for a stream body.
 type FetchInit = RequestInit & { duplex?: "half" };
 
+/** A successful attempt. */
+interface Received {
+  result: HttpResponse;
+  /** The `fetch` response, for `SchemaError`. */
+  response: Response;
+  request: HttpRequest;
+}
+
 export function createClient(options: ClientOptions): HttpClient {
-  const { baseUrl, credentials, fetch: customFetch } = options;
+  const { baseUrl, credentials, fetch: customFetch, onRequest, onResponse, onError } = options;
   const sendWithRefresh =
     options.refresh === undefined ? undefined : createRefresh(options.refresh, options.skipRefresh);
 
@@ -25,11 +35,11 @@ export function createClient(options: ClientOptions): HttpClient {
    * this attempt. The caller's signal is passed in, not created here, so it can
    * span several attempts.
    */
-  async function attempt<T>(
+  async function attempt(
     method: string,
     url: string,
     requestOptions: RequestOptions,
-  ): Promise<HttpResponse<T>> {
+  ): Promise<Received> {
     const { signal: callerSignal, responseType } = requestOptions;
     const headers = mergeHeaders(await resolveHeaders(options.headers), requestOptions.headers);
     const body = prepareBody(requestOptions.body, headers);
@@ -45,13 +55,17 @@ export function createClient(options: ClientOptions): HttpClient {
     const signal = combineSignals(callerSignal, deadline);
     if (signal !== undefined) init.signal = signal;
 
+    // A copy of the headers, so that the hook cannot change what is sent.
+    if (onRequest !== undefined) notify(onRequest, { method, url, headers: new Headers(headers) });
+
     let response: Response;
     let raw: RawBody;
     try {
       response = await callFetch(url, init);
       raw = await readBody(response, method, responseType);
     } catch (error) {
-      // Cancelled by the caller: theirs to handle, rethrown as their signal's reason (A6).
+      // Cancelled by the caller: theirs to handle, rethrown as their signal's reason
+      // rather than turned into a library error.
       callerSignal?.throwIfAborted();
       if (deadline?.signal.aborted === true) {
         throw new TimeoutError({ request: httpRequest, timeout, cause: error });
@@ -61,7 +75,7 @@ export function createClient(options: ClientOptions): HttpClient {
       deadline?.stop();
     }
 
-    return toHttpResponse<T>(response, httpRequest, raw);
+    return { result: toHttpResponse(response, httpRequest, raw), response, request: httpRequest };
   }
 
   async function request<T>(
@@ -73,14 +87,38 @@ export function createClient(options: ClientOptions): HttpClient {
     // `fetch` normalizes the case of GET, POST, PUT, DELETE, but not of PATCH.
     const upperMethod = method.toUpperCase();
     // Every call is a fresh attempt: client headers, body and timeout are prepared anew.
-    const send = (): Promise<HttpResponse<T>> => attempt<T>(upperMethod, url, requestOptions);
+    const send = (): Promise<Received> => attempt(upperMethod, url, requestOptions);
+    const { schema } = requestOptions;
 
-    if (sendWithRefresh === undefined) return send();
-    return sendWithRefresh(send, {
-      signal: requestOptions.signal,
-      resendable: !(requestOptions.body instanceof ReadableStream),
-      skip: requestOptions.skipRefresh === true,
-    });
+    let received: Received;
+    let result: HttpResponse;
+    try {
+      received =
+        sendWithRefresh === undefined
+          ? await send()
+          : await sendWithRefresh(send, {
+              signal: requestOptions.signal,
+              resendable: !(requestOptions.body instanceof ReadableStream),
+              skip: requestOptions.skipRefresh === true,
+            });
+      result = received.result;
+      if (schema !== undefined) {
+        const { response, request: httpRequest } = received;
+        result = { ...result, data: await validate(schema, result.data, response, httpRequest) };
+      }
+    } catch (error) {
+      // Only library errors. A cancel by the caller rejects with the signal's reason
+      // and is not a failure; an error thrown before the request is sent (by the
+      // headers function, the query, the body) is the caller's to see.
+      if (onError !== undefined && isRequestError(error)) notify(onError, error, error.request);
+      throw error;
+    }
+
+    // A copy, so that the hook cannot replace a field of what the caller gets.
+    if (onResponse !== undefined) notify(onResponse, { ...result }, received.request);
+    // `T` is the caller's claim about the server, or the schema's output.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    return result as HttpResponse<T>;
   }
 
   return {

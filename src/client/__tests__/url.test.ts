@@ -10,7 +10,7 @@ async function urlFor(baseUrl: string, path: string, query?: Query): Promise<str
   return last().url;
 }
 
-describe("A8: URL building", () => {
+describe("URL building", () => {
   it("works with a relative baseUrl and a query", async () => {
     expect(await urlFor("/api", "/sites", { page: 2 })).toBe("/api/sites?page=2");
   });
@@ -57,7 +57,7 @@ describe("A8: URL building", () => {
   });
 });
 
-describe("A9: query values", () => {
+describe("query values", () => {
   it("repeats the key for an array", async () => {
     expect(await urlFor("/api", "/x", { id: [1, 2, 3] })).toBe("/api/x?id=1&id=2&id=3");
   });

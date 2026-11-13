@@ -23,7 +23,7 @@ const passThrough: ReadonlyArray<[string, () => BodyInit]> = [
   ["ReadableStream", () => new ReadableStream()],
 ];
 
-describe("A3: the body is prepared the same way for every method", () => {
+describe("the body is prepared the same way for every method", () => {
   describe.each(methods)("%s", (method) => {
     it.each(passThrough)("sends %s as is, without a Content-Type", async (_name, make) => {
       const { fetch, last } = recordingFetch();

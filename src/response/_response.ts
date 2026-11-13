@@ -24,7 +24,7 @@ export type ResponseBodyType = "json" | "text" | "blob" | "arrayBuffer" | "strea
 /** The body as read from the wire, before JSON parsing. */
 export interface RawBody {
   type: ResponseBodyType;
-  /** A string for json and text, `undefined` when the response has no body. */
+  /** A string for json and text; `undefined` when there is no data. */
   value: unknown;
 }
 
@@ -50,37 +50,54 @@ export async function readBody(
 ): Promise<RawBody> {
   // `responseType` describes the success body. An error body is read by its own
   // content type: a failed file download usually answers with JSON.
-  const type =
-    response.ok && responseType !== undefined
-      ? responseType
-      : detectBodyType(response.headers.get("content-type"));
+  const asked = response.ok ? responseType : undefined;
+  const type = asked ?? detectBodyType(response.headers.get("content-type"));
 
+  // With the type left to the content type, a missing or empty body is "no data".
+  // A type asked for explicitly always gives a value of that type: an empty one.
   if (method === "HEAD" || NO_BODY_STATUSES.has(response.status)) {
-    return { type, value: undefined };
+    return { type, value: asked === undefined ? undefined : emptyBody(asked) };
   }
-  if (type === "json" || type === "text") return { type, value: await response.text() };
+  if (type === "json" || type === "text") {
+    const text = await response.text();
+    return { type, value: text === "" && asked === undefined ? undefined : text };
+  }
   if (type === "blob") return { type, value: await response.blob() };
   if (type === "arrayBuffer") return { type, value: await response.arrayBuffer() };
-  return { type, value: response.body ?? undefined };
+  return { type, value: response.body ?? emptyStream() };
 }
+
+function emptyBody(type: ResponseBodyType): unknown {
+  if (type === "text") return "";
+  if (type === "blob") return new Blob([]);
+  if (type === "arrayBuffer") return new ArrayBuffer(0);
+  if (type === "stream") return emptyStream();
+  return undefined;
+}
+
+const emptyStream = (): ReadableStream<Uint8Array> =>
+  new ReadableStream({
+    start(controller) {
+      controller.close();
+    },
+  });
 
 /** Turns the raw body into `data`. Throws the `SyntaxError` of broken JSON. */
 function decodeBody({ type, value }: RawBody): unknown {
-  if (typeof value !== "string") return value;
-  // An empty body is "no data", not an empty string or a JSON error (A7).
-  if (type === "json") return value.trim() === "" ? undefined : JSON.parse(value);
-  return value === "" ? undefined : value;
+  if (type !== "json" || typeof value !== "string") return value;
+  // Whitespace only is no data, not a JSON error.
+  return value.trim() === "" ? undefined : JSON.parse(value);
 }
 
 /**
  * Builds the resolved response, or throws `HttpError` for a status outside
  * 200-299 and `ParseError` for a successful body that does not parse.
  */
-export function toHttpResponse<T>(
+export function toHttpResponse(
   response: Response,
   request: HttpRequest,
   body: RawBody,
-): HttpResponse<T> {
+): HttpResponse {
   if (!response.ok) {
     let data: unknown;
     try {
@@ -105,8 +122,6 @@ export function toHttpResponse<T>(
     statusText: response.statusText,
     headers: response.headers,
     url: response.url || request.url,
-    // `T` is the caller's claim about the server, not checked here.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    data: data as T,
+    data,
   };
 }

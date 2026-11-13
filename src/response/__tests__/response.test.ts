@@ -17,7 +17,7 @@ function answer(body: string, contentType: string | null, status = 200): Respons
   return new Response(bytes(body), { status, headers });
 }
 
-describe("A7: no body gives data undefined", () => {
+describe("no body gives data undefined", () => {
   it.each([204, 205])("for status %i, even with a JSON content type", async (status) => {
     const api = clientAnswering(
       () => new Response(null, { status, headers: { "content-type": "application/json" } }),
@@ -62,7 +62,7 @@ describe("A7: no body gives data undefined", () => {
   });
 });
 
-describe("A7: a body that does not parse", () => {
+describe("a body that does not parse", () => {
   it("throws ParseError with the SyntaxError as cause, never puts the message into data", async () => {
     const api = clientAnswering(() => answer('{"a":', "application/json"));
 
@@ -141,14 +141,14 @@ describe("responseType overrides the content type", () => {
   });
 
   it("blob", async () => {
-    const { data } = await clientAnswering(json).get<Blob>("/x", { responseType: "blob" });
+    const { data } = await clientAnswering(json).get("/x", { responseType: "blob" });
 
     expect(data).toBeInstanceOf(Blob);
     expect(await data.text()).toBe('{"a":1}');
   });
 
   it("arrayBuffer", async () => {
-    const { data } = await clientAnswering(json).get<ArrayBuffer>("/x", {
+    const { data } = await clientAnswering(json).get("/x", {
       responseType: "arrayBuffer",
     });
 
@@ -157,7 +157,7 @@ describe("responseType overrides the content type", () => {
   });
 
   it("stream gives response.body unread", async () => {
-    const { data } = await clientAnswering(json).get<ReadableStream<Uint8Array>>("/x", {
+    const { data } = await clientAnswering(json).get("/x", {
       responseType: "stream",
     });
 
@@ -165,21 +165,76 @@ describe("responseType overrides the content type", () => {
     expect(await new Response(data).text()).toBe('{"a":1}');
   });
 
-  it.each<ResponseBodyType>(["json", "text", "blob", "arrayBuffer", "stream"])(
-    "%s still gives undefined for 204",
-    async (responseType) => {
-      const api = clientAnswering(() => new Response(null, { status: 204 }));
-
-      expect((await api.get("/x", { responseType })).data).toBeUndefined();
-    },
-  );
-
   it("does not apply to an error body, which is read by its content type", async () => {
     const api = clientAnswering(() => answer('{"message":"gone"}', "application/json", 404));
 
     const error = await rejectionOf(api.get("/file", { responseType: "blob" }), HttpError);
 
     expect(error.data).toEqual({ message: "gone" });
+  });
+});
+
+/** The body read to the end, as text, whatever form `data` takes. */
+async function textOf(data: unknown): Promise<string> {
+  if (typeof data === "string") return data;
+  if (data instanceof Blob) return data.text();
+  if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+  if (data instanceof ReadableStream) return new Response(data).text();
+  throw new Error(`unexpected data: ${String(data)}`);
+}
+
+const binaryTypes: [ResponseBodyType, abstract new (...args: never[]) => unknown][] = [
+  ["blob", Blob],
+  ["arrayBuffer", ArrayBuffer],
+  ["stream", ReadableStream],
+];
+
+describe("an explicit responseType other than json always gives its type, empty without a body", () => {
+  const noBody: [string, () => Response, string][] = [
+    ["204", () => new Response(null, { status: 204 }), "GET"],
+    ["205", () => new Response(null, { status: 205 }), "GET"],
+    ["a null body", () => new Response(null), "GET"],
+    ["an empty body", () => answer("", "text/plain"), "GET"],
+    ["a HEAD request", () => answer("ignored", "text/plain"), "HEAD"],
+  ];
+
+  describe.each(noBody)("%s", (_, make, method) => {
+    it("text gives an empty string", async () => {
+      const api = clientAnswering(make);
+
+      expect((await api.request(method, "/x", { responseType: "text" })).data).toBe("");
+    });
+
+    it.each(binaryTypes)("%s gives an empty one", async (responseType, type) => {
+      const api = clientAnswering(make);
+
+      const { data } = await api.request(method, "/x", { responseType });
+
+      expect(data).toBeInstanceOf(type);
+      expect(await textOf(data)).toBe("");
+    });
+  });
+
+  it.each(noBody)("json still gives undefined for %s", async (_, make, method) => {
+    const api = clientAnswering(make);
+
+    expect((await api.request(method, "/x", { responseType: "json" })).data).toBeUndefined();
+  });
+
+  it("without responseType an empty text body is still undefined", async () => {
+    const api = clientAnswering(() => answer("", "text/plain"));
+
+    expect((await api.get("/x")).data).toBeUndefined();
+  });
+
+  it("the empty stream is a fresh one each time, closed", async () => {
+    const api = clientAnswering(() => new Response(null, { status: 204 }));
+
+    const first = await api.get("/x", { responseType: "stream" });
+    const second = await api.get("/x", { responseType: "stream" });
+
+    expect(first.data).not.toBe(second.data);
+    expect(await first.data.getReader().read()).toEqual({ done: true, value: undefined });
   });
 });
 

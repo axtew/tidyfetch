@@ -10,8 +10,12 @@ import {
   type HttpResponse,
   NetworkError,
   ParseError,
+  type RequestError,
   type RequestHeaders,
   type ResponseBodyType,
+  type ResponseData,
+  SchemaError,
+  type StandardSchemaV1,
   TimeoutError,
 } from "../..";
 
@@ -177,6 +181,57 @@ describe("response data", () => {
       HttpResponse<User[]>
     >();
   });
+
+  test("follows responseType", async () => {
+    expectTypeOf((await api.get("/x", { responseType: "text" })).data).toEqualTypeOf<string>();
+    expectTypeOf((await api.get("/x", { responseType: "blob" })).data).toEqualTypeOf<Blob>();
+    expectTypeOf(
+      (await api.post("/x", { responseType: "arrayBuffer" })).data,
+    ).toEqualTypeOf<ArrayBuffer>();
+    expectTypeOf((await api.request("GET", "/x", { responseType: "stream" })).data).toEqualTypeOf<
+      ReadableStream<Uint8Array>
+    >();
+    expectTypeOf((await api.get("/x", { responseType: "json" })).data).toBeUnknown();
+  });
+
+  test("with an explicit type, takes responseType json only", async () => {
+    expectTypeOf((await api.get<User>("/me", { responseType: "json" })).data).toEqualTypeOf<User>();
+    // @ts-expect-error the type of a text body is string, not a type argument
+    void api.get<User>("/me", { responseType: "text" });
+    // @ts-expect-error leave the type argument out: data is a Blob
+    void api.get<Blob>("/file", { responseType: "blob" });
+  });
+
+  test("an explicit type keeps the other options", async () => {
+    interface Filters {
+      page: number;
+    }
+    const filters: Filters = { page: 1 };
+    const response = await api.get<User>("/me", {
+      query: filters,
+      headers: { a: "1" },
+      timeout: 1_000,
+      signal: new AbortController().signal,
+      skipRefresh: true,
+    });
+    expectTypeOf(response.data).toEqualTypeOf<User>();
+    expectTypeOf(
+      (await api.post<User>("/users", { body: { name: "a" }, query: filters })).data,
+    ).toEqualTypeOf<User>();
+  });
+
+  test("a responseType not known in advance gives unknown", async () => {
+    const responseType = maybe<ResponseBodyType>("blob");
+
+    expectTypeOf((await api.get("/x", { responseType })).data).toBeUnknown();
+  });
+
+  test("ResponseData spells the rule out", () => {
+    type Schema = StandardSchemaV1<unknown, Date>;
+    expectTypeOf<ResponseData<User, "json" | undefined, undefined>>().toEqualTypeOf<User>();
+    expectTypeOf<ResponseData<User, "text" | "blob", undefined>>().toEqualTypeOf<string | Blob>();
+    expectTypeOf<ResponseData<User, "text", Schema>>().toEqualTypeOf<Date>();
+  });
 });
 
 describe("errors", () => {
@@ -201,6 +256,52 @@ describe("errors", () => {
       expectTypeOf(error.name).toEqualTypeOf<"ParseError">();
       expectTypeOf(error.response).toEqualTypeOf<Response>();
     }
+    if (error instanceof SchemaError) {
+      expectTypeOf(error.name).toEqualTypeOf<"SchemaError">();
+      expectTypeOf(error.issues).toEqualTypeOf<readonly StandardSchemaV1.Issue[]>();
+      expectTypeOf(error.data).toBeUnknown();
+      expectTypeOf(error.response).toEqualTypeOf<Response>();
+      expectTypeOf(error.request).toEqualTypeOf<HttpRequest>();
+    }
+  });
+
+  test("RequestError narrows by name", () => {
+    expectTypeOf<RequestError["request"]>().toEqualTypeOf<HttpRequest>();
+    expectTypeOf<Extract<RequestError, { name: "SchemaError" }>>().toEqualTypeOf<SchemaError>();
+    expectTypeOf<Extract<RequestError, { name: "HttpError" }>["status"]>().toBeNumber();
+  });
+});
+
+describe("hooks", () => {
+  test("get typed parameters", () => {
+    createClient({
+      baseUrl: "/api",
+      onRequest: (request) => {
+        expectTypeOf(request).toEqualTypeOf<HttpRequest>();
+      },
+      onResponse: (response, request) => {
+        expectTypeOf(response).toEqualTypeOf<HttpResponse>();
+        expectTypeOf(request).toEqualTypeOf<HttpRequest>();
+      },
+      onError: (error, request) => {
+        expectTypeOf(error).toEqualTypeOf<RequestError>();
+        expectTypeOf(request).toEqualTypeOf<HttpRequest>();
+      },
+    });
+  });
+
+  test("may be async and return anything", () => {
+    createClient({
+      baseUrl: "/api",
+      onRequest: async () => {},
+      onResponse: (response) => response.status,
+      onError: async (error) => error.message,
+    });
+  });
+
+  test("are functions", () => {
+    // @ts-expect-error a hook is a function
+    createClient({ baseUrl: "/api", onError: true });
   });
 });
 
@@ -249,10 +350,13 @@ describe("optional options take undefined", () => {
     const skipRefresh = maybe(true);
     const query = maybe({ page: 1 });
     const body = maybe<unknown>({ a: 1 });
+    const schema = maybe<StandardSchemaV1>({
+      "~standard": { version: 1, vendor: "custom", validate: (value) => ({ value }) },
+    });
 
     void api.get("/x", { signal, timeout, headers, responseType, skipRefresh, query });
     void api.post("/x", { signal, timeout, headers, responseType, skipRefresh, query, body });
-    void api.request("PATCH", "/x", { signal, body });
+    void api.request("PATCH", "/x", { signal, body, schema });
   });
 
   test("the case from a service: an optional signal passed through", () => {
@@ -274,6 +378,9 @@ describe("optional options take undefined", () => {
       fetch: maybe<FetchFunction>(globalThis.fetch),
       refresh: maybe(async () => true),
       skipRefresh: maybe((request: HttpRequest) => request.url === "/login"),
+      onRequest: maybe((_request: HttpRequest) => {}),
+      onResponse: maybe((_response: HttpResponse) => {}),
+      onError: maybe((_error: RequestError) => {}),
     });
   });
 

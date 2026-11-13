@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createClient } from "../..";
 import { recordingFetch } from "./_helpers";
 
-describe("A1: request headers add to the client headers instead of replacing them", () => {
+describe("request headers add to the client headers instead of replacing them", () => {
   it("keeps Authorization when the request passes its own header", async () => {
     const { fetch, last } = recordingFetch();
     const api = createClient({ baseUrl: "/api", headers: { Authorization: "Bearer t" }, fetch });
@@ -25,7 +25,7 @@ describe("A1: request headers add to the client headers instead of replacing the
   });
 });
 
-describe("A2: every method sends the client headers", () => {
+describe("every method sends the client headers", () => {
   const { fetch, calls } = recordingFetch();
   const api = createClient({ baseUrl: "/api", headers: { Authorization: "Bearer t" }, fetch });
 
@@ -44,7 +44,7 @@ describe("A2: every method sends the client headers", () => {
   });
 });
 
-describe("A5 (request side): request headers in any HeadersInit form are merged", () => {
+describe("request headers in any HeadersInit form are merged", () => {
   it("accepts a Headers instance", async () => {
     const { fetch, last } = recordingFetch();
     const api = createClient({ baseUrl: "/api", headers: { Authorization: "Bearer t" }, fetch });
@@ -79,7 +79,7 @@ describe("A5 (request side): request headers in any HeadersInit form are merged"
   });
 });
 
-describe("B7: client headers as a function", () => {
+describe("client headers as a function", () => {
   it("is called on every request, so a changed token is sent", async () => {
     const { fetch, calls } = recordingFetch();
     let token = "first";

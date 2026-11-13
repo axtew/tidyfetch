@@ -6,6 +6,8 @@ import {
   type HttpRequest,
   NetworkError,
   ParseError,
+  SchemaError,
+  type StandardSchemaV1,
   TimeoutError,
 } from "../..";
 import { rejectionOf } from "../../client/__tests__/_helpers";
@@ -24,9 +26,14 @@ const errors = [
     "ParseError",
     () => new ParseError({ request, response: new Response(), cause: new SyntaxError("x") }),
   ],
+  [
+    "SchemaError",
+    () =>
+      new SchemaError({ request, response: new Response(), data: {}, issues: [{ message: "x" }] }),
+  ],
 ] as const;
 
-const classes = [HttpError, TimeoutError, NetworkError, ParseError];
+const classes = [HttpError, TimeoutError, NetworkError, ParseError, SchemaError];
 
 describe("error classes", () => {
   it.each(errors)("%s is an Error with its own name and a stack", (name, make) => {
@@ -101,5 +108,56 @@ describe("HttpError from a response", () => {
     });
 
     await expect(api.get("/x")).rejects.toMatchObject({ name: "HttpError", status });
+  });
+});
+
+const messageOf = (issues: StandardSchemaV1.Issue[]): string =>
+  new SchemaError({ request, response: new Response(), data: null, issues }).message;
+
+describe("SchemaError message", () => {
+  const prefix = "GET /api/x: response does not match the schema";
+
+  it("shows the first issue with its path, and how many follow", () => {
+    expect(
+      messageOf([
+        { message: "Invalid email", path: ["user", "email"] },
+        { message: "Required", path: ["user", "name"] },
+        { message: "Required", path: ["id"] },
+      ]),
+    ).toBe(`${prefix}: user.email: Invalid email (and 2 more issues)`);
+  });
+
+  it("says issue for one more", () => {
+    expect(messageOf([{ message: "a" }, { message: "b" }])).toBe(`${prefix}: a (and 1 more issue)`);
+  });
+
+  it("puts array indexes in brackets and reads path segment objects", () => {
+    expect(
+      messageOf([{ message: "Expected string", path: [{ key: "items" }, 0, { key: "name" }] }]),
+    ).toBe(`${prefix}: items[0].name: Expected string`);
+    expect(messageOf([{ message: "Too short", path: [2] }])).toBe(`${prefix}: [2]: Too short`);
+  });
+
+  it("leaves out an empty or missing path", () => {
+    expect(messageOf([{ message: "Expected object", path: [] }])).toBe(
+      `${prefix}: Expected object`,
+    );
+    expect(messageOf([{ message: "Expected object" }])).toBe(`${prefix}: Expected object`);
+  });
+
+  it("has no details when there are no issues", () => {
+    expect(messageOf([])).toBe(prefix);
+  });
+
+  it("keeps the issues, the data, the response and the request", () => {
+    const issues = [{ message: "x" }];
+    const response = new Response();
+    const error = new SchemaError({ request, response, data: { a: 1 }, issues });
+
+    expect(error.issues).toBe(issues);
+    expect(error.data).toEqual({ a: 1 });
+    expect(error.response).toBe(response);
+    expect(error.request).toBe(request);
+    expect(error.cause).toBeUndefined();
   });
 });

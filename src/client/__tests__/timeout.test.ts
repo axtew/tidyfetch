@@ -7,7 +7,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("A6: timeout, cancellation and network failure are told apart", () => {
+describe("timeout, cancellation and network failure are told apart", () => {
   it("throws TimeoutError when the timeout fires", async () => {
     const api = createClient({ baseUrl: "/api", timeout: 20, fetch: delayedFetch(200) });
 
@@ -78,7 +78,7 @@ describe("A6: timeout, cancellation and network failure are told apart", () => {
   });
 });
 
-describe("A6: abort while the body is being read", () => {
+describe("abort while the body is being read", () => {
   it("throws TimeoutError when the timeout fires during the body", async () => {
     const api = createClient({
       baseUrl: "/api",
@@ -162,7 +162,7 @@ describe("timeout values", () => {
   });
 });
 
-describe("A4: no listeners left on the caller's signal", () => {
+describe("no listeners left on the caller's signal", () => {
   it("adds none, over many requests with one signal, failed ones included", async () => {
     const controller = new AbortController();
     const { signal } = controller;
@@ -213,7 +213,7 @@ describe("responseType stream and the timeout", () => {
       fetch: slowBodyFetch("first ", "second", 80, "text/plain"),
     });
 
-    const { data } = await api.get<ReadableStream<Uint8Array>>("/x", { responseType: "stream" });
+    const { data } = await api.get("/x", { responseType: "stream" });
 
     expect(await new Response(data).text()).toBe("first second");
   });
@@ -226,7 +226,7 @@ describe("responseType stream and the timeout", () => {
     const controller = new AbortController();
     const reason = new Error("stop");
 
-    const { data } = await api.get<ReadableStream<Uint8Array>>("/x", {
+    const { data } = await api.get("/x", {
       responseType: "stream",
       signal: controller.signal,
     });

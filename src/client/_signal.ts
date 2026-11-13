@@ -34,7 +34,7 @@ export function startDeadline(timeout: number, untilHeaders: boolean): Deadline 
 /**
  * One signal for `fetch` from the caller's signal and the deadline.
  * `AbortSignal.any` puts no listener on its sources, so a long-lived caller
- * signal collects nothing from our requests (A4). It wraps even a single caller
+ * signal collects nothing from our requests. It wraps even a single caller
  * signal: then `fetch` subscribes to the derived signal, not to the caller's.
  */
 export function combineSignals(

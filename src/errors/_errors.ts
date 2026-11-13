@@ -1,4 +1,5 @@
 import type { HttpRequest } from "../request";
+import type { StandardSchemaV1 } from "../schema";
 
 const label = (request: HttpRequest): string => `${request.method} ${request.url}`;
 
@@ -89,4 +90,66 @@ export class ParseError extends Error {
     this.response = response;
     this.request = request;
   }
+}
+
+export interface SchemaErrorInit {
+  request: HttpRequest;
+  response: Response;
+  /** The parsed body that failed the check. */
+  data: unknown;
+  issues: readonly StandardSchemaV1.Issue[];
+}
+
+/** A successful response whose `data` does not pass the request `schema`. */
+export class SchemaError extends Error {
+  override readonly name = "SchemaError" as const;
+  /** What the schema reported, in its own order. */
+  readonly issues: readonly StandardSchemaV1.Issue[];
+  /** The parsed body as it came, before the schema. */
+  readonly data: unknown;
+  /** The response; its body is already read into `data`. */
+  readonly response: Response;
+  readonly request: HttpRequest;
+
+  constructor({ request, response, data, issues }: SchemaErrorInit) {
+    super(`${label(request)}: response does not match the schema${describeIssues(issues)}`);
+    this.issues = issues;
+    this.data = data;
+    this.response = response;
+    this.request = request;
+  }
+}
+
+/** `: user.email: Invalid email (and 2 more issues)`: the first issue, and how many follow. */
+function describeIssues(issues: readonly StandardSchemaV1.Issue[]): string {
+  const [first, ...rest] = issues;
+  if (first === undefined) return "";
+  const path = formatPath(first.path ?? []);
+  const more =
+    rest.length === 0 ? "" : ` (and ${rest.length} more issue${rest.length === 1 ? "" : "s"})`;
+  return `: ${path === "" ? "" : `${path}: `}${first.message}${more}`;
+}
+
+/** `items[0].name`: array indexes in brackets, other keys joined with dots. */
+function formatPath(path: readonly (PropertyKey | StandardSchemaV1.PathSegment)[]): string {
+  let text = "";
+  for (const segment of path) {
+    const key = typeof segment === "object" ? segment.key : segment;
+    if (typeof key === "number") text += `[${key}]`;
+    else text += text === "" ? String(key) : `.${String(key)}`;
+  }
+  return text;
+}
+
+/** Every error a sent request can fail with. A cancelled request rejects with the signal's reason instead. */
+export type RequestError = HttpError | NetworkError | ParseError | SchemaError | TimeoutError;
+
+export function isRequestError(error: unknown): error is RequestError {
+  return (
+    error instanceof HttpError ||
+    error instanceof NetworkError ||
+    error instanceof ParseError ||
+    error instanceof SchemaError ||
+    error instanceof TimeoutError
+  );
 }
