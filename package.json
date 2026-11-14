@@ -46,6 +46,7 @@
     "example:dev": "pnpm build && pnpm --filter tidyfetch-example dev",
     "example:build": "pnpm build && pnpm --filter tidyfetch-example build",
     "example:deploy": "pnpm build && pnpm --filter tidyfetch-example run deploy",
+    "bench:size": "pnpm build && pnpm --dir bench/size install --ignore-workspace && pnpm --dir bench/size measure",
     "prepublishOnly": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm check:package"
   },
   "devDependencies": {

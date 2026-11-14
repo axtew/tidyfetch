@@ -1,0 +1,17 @@
+{
+  "name": "tidyfetch-bench-size",
+  "private": true,
+  "type": "module",
+  "description": "Bundle size of tidyfetch next to other HTTP clients, on the same small example.",
+  "scripts": {
+    "measure": "node measure.mjs"
+  },
+  "devDependencies": {
+    "tidyfetch": "link:../..",
+    "axios": "1.21.1",
+    "esbuild": "0.28.2",
+    "ky": "2.2.0",
+    "ofetch": "1.5.1",
+    "wretch": "3.0.9"
+  }
+}
