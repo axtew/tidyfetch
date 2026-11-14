@@ -21,17 +21,16 @@ interface ErrorReporting {
 }
 
 /**
- * Reports an exception from a hook as an uncaught one, out of the request's way:
- * through `reportError` where there is one (browsers, Deno), so it reaches the
- * `error` event and error trackers; elsewhere (Node) it is rethrown in a
- * microtask and becomes an `uncaughtException`.
+ * Reports an exception from a hook out of the request's way. Where there is
+ * `reportError` (browsers, Deno), through it: it reaches the `error` event and
+ * error trackers and stops nothing. Elsewhere (Node) it is logged with
+ * `console.error`: rethrown, it would become an `uncaughtException`, which by
+ * default ends the process, a whole server for one broken log line.
  */
 function reportHookError(error: unknown): void {
   const scope: ErrorReporting = globalThis;
   if (scope.reportError === undefined) {
-    queueMicrotask(() => {
-      throw error;
-    });
+    console.error("tidyfetch: a hook threw", error);
   } else {
     scope.reportError(error);
   }

@@ -299,32 +299,22 @@ describe("an exception in a hook", () => {
     expect(reportError).toHaveBeenCalledExactlyOnceWith(thrown);
   });
 
-  it("is rethrown in a microtask where there is no reportError (Node)", async () => {
+  it("is logged with console.error where there is no reportError (Node)", async () => {
     vi.stubGlobal("reportError", undefined);
-    // Every microtask still runs; only the one that throws our error is caught,
-    // instead of becoming an uncaught exception of the test run.
-    const caught: unknown[] = [];
-    const realQueueMicrotask = globalThis.queueMicrotask;
-    vi.spyOn(globalThis, "queueMicrotask").mockImplementation((task) => {
-      realQueueMicrotask(() => {
-        try {
-          task();
-        } catch (error) {
-          if (error !== thrown) throw error;
-          caught.push(error);
-        }
-      });
-    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const api = createClient({
       baseUrl: "/api",
       fetch: () => Promise.resolve(json({ id: 1 })),
-      onResponse: throwing,
+      onRequest: throwing,
+      onResponse: rejecting,
     });
 
     const { data } = await api.get("/x");
     await flush();
 
     expect(data).toEqual({ id: 1 });
-    expect(caught).toEqual([thrown]);
+    expect(consoleError).toHaveBeenCalledTimes(2);
+    expect(consoleError).toHaveBeenCalledWith(expect.any(String), thrown);
+    // Not rethrown: Vitest fails a run on an uncaught exception, as Node ends the process.
   });
 });

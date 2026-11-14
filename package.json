@@ -43,6 +43,9 @@
     "check:package": "publint && attw --pack . --profile esm-only",
     "lint:fix": "oxlint --type-aware --fix",
     "typecheck:compat": "pnpm --package=typescript@5.0 dlx tsc -p tsconfig.compat.json",
+    "example:dev": "pnpm build && pnpm --filter tidyfetch-example dev",
+    "example:build": "pnpm build && pnpm --filter tidyfetch-example build",
+    "example:deploy": "pnpm build && pnpm --filter tidyfetch-example run deploy",
     "prepublishOnly": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm check:package"
   },
   "devDependencies": {

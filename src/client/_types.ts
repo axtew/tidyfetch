@@ -69,7 +69,9 @@ export interface ClientOptions {
   /**
    * Before every attempt, the retry after a refresh included. The headers are a
    * copy: to send a header, use the `headers` option. A throw or a rejection here
-   * does not affect the request; it is reported as uncaught (`reportError`).
+   * does not affect the request; it is reported: through `reportError` where there
+   * is one (browsers, Deno), with `console.error` elsewhere (Node), so a broken hook
+   * never ends a server process.
    */
   onRequest?: ((request: HttpRequest) => unknown) | undefined;
   /**
