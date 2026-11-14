@@ -1,6 +1,6 @@
 {
   "name": "tidyfetch",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A small HTTP client on fetch: typed errors, timeouts, one shared token refresh for parallel 401s, optional schema validation.",
   "keywords": [
     "fetch",
