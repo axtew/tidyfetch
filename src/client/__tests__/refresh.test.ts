@@ -7,60 +7,24 @@ import {
   type HttpRequest,
   NetworkError,
   ParseError,
-  TimeoutError,
 } from "../..";
 import {
+  authOf,
+  bearerSetup,
   deferred,
-  delayedFetch,
   fakeServer,
   flush,
   json,
   rejectionOf,
-  type SentRequest,
   unauthorized,
 } from "./_helpers";
+import { refreshCancelCases } from "./_signalCases";
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 const jsonType = { headers: { "content-type": "application/json" } };
-
-const authOf = (request: SentRequest | undefined): string | null =>
-  request?.headers.get("authorization") ?? null;
-
-/**
- * A bearer-token setup: the server accepts only `Bearer <valid>`, the client
- * reads `token` at send time, and `refresh` waits for `gate` (open by default)
- * before it puts the valid token in place and resolves with `result`.
- */
-function bearerSetup({
-  result = true,
-  gated = false,
-  hold,
-}: {
-  result?: boolean;
-  gated?: boolean;
-  /** Holds the answer to the matching request until the returned promise resolves. */
-  hold?: (request: SentRequest) => Promise<void> | undefined;
-} = {}) {
-  const state = { token: "old", valid: "new" };
-  const gate = deferred();
-  if (!gated) gate.resolve();
-  const refresh = vi.fn<() => Promise<boolean>>(async () => {
-    await gate.promise;
-    if (result) state.token = state.valid;
-    return result;
-  });
-  const server = fakeServer(async (request) => {
-    const ok = authOf(request) === `Bearer ${state.valid}`;
-    if (!ok) await hold?.(request);
-    return ok ? json({ url: request.url }) : unauthorized();
-  });
-  const headers = vi.fn<() => HeadersInit>(() => ({ Authorization: `Bearer ${state.token}` }));
-  const api = createClient({ baseUrl: "/api", headers, refresh, fetch: server.fetch });
-  return { api, state, gate, refresh, server, headers };
-}
 
 describe("parallel 401 responses share one refresh", () => {
   it("calls refresh once for five parallel 401s and retries each once with the new token", async () => {
@@ -270,47 +234,7 @@ describe("a stale 401: the request went out with the old token", () => {
   });
 });
 
-describe("cancelling while waiting for the refresh", () => {
-  it("rejects only the cancelled request; the refresh goes on for the others", async () => {
-    const { api, gate, refresh, server } = bearerSetup({ gated: true });
-    const cancelled = new AbortController();
-    const other = new AbortController();
-    const addListener = vi.spyOn(other.signal, "addEventListener");
-    const removeListener = vi.spyOn(other.signal, "removeEventListener");
-    const reason = new Error("left the page");
-
-    const a = api.get("/a", { signal: cancelled.signal });
-    const b = api.get("/b", { signal: other.signal });
-    const c = api.get("/c");
-    await flush();
-    cancelled.abort(reason);
-
-    await expect(a).rejects.toBe(reason);
-    expect(refresh).toHaveBeenCalledOnce();
-
-    gate.resolve();
-    await expect(b).resolves.toMatchObject({ data: { url: "/api/b" } });
-    await expect(c).resolves.toMatchObject({ data: { url: "/api/c" } });
-    expect(refresh).toHaveBeenCalledOnce();
-    expect(server.sentTo("/api/a")).toHaveLength(1);
-    // The wait listens to the caller's signal and lets it go afterwards.
-    expect(addListener).toHaveBeenCalledOnce();
-    expect(removeListener).toHaveBeenCalledOnce();
-  });
-
-  it("rejects with the default AbortError when aborted without a reason", async () => {
-    const { api, gate } = bearerSetup({ gated: true });
-    const controller = new AbortController();
-
-    const pending = api.get("/a", { signal: controller.signal });
-    await flush();
-    controller.abort();
-    const error = await rejectionOf(pending, DOMException);
-    gate.resolve();
-
-    expect(error.name).toBe("AbortError");
-  });
-});
+refreshCancelCases();
 
 describe("requests that never trigger a refresh", () => {
   it("skips a request matched by the skipRefresh option, and passes it the request", async () => {
@@ -351,14 +275,6 @@ describe("requests that never trigger a refresh", () => {
     const api = createClient({ baseUrl: "/api", refresh, fetch });
 
     await expect(api.get("/x")).rejects.toBeInstanceOf(errorClass);
-    expect(refresh).not.toHaveBeenCalled();
-  });
-
-  it("does not refresh on a timeout", async () => {
-    const refresh = vi.fn<() => Promise<boolean>>(() => Promise.resolve(true));
-    const api = createClient({ baseUrl: "/api", timeout: 5, refresh, fetch: delayedFetch(1000) });
-
-    await expect(api.get("/x")).rejects.toBeInstanceOf(TimeoutError);
     expect(refresh).not.toHaveBeenCalled();
   });
 });

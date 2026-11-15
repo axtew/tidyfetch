@@ -38,7 +38,7 @@ try {
 - **A timeout on every request.** 30 seconds by default, per attempt, built on `AbortSignal`.
 - **Typed `data`.** From a type parameter, from `responseType`, or from a schema (Zod, Valibot, ArkType through Standard Schema).
 - **The usual fetch chores done.** A relative `baseUrl`, arrays in the query, merged headers, JSON and `FormData` bodies, empty responses.
-- **Small, no dependencies.** 3.1 kB min + gzip, see [Bundle size](#bundle-size).
+- **Small, no dependencies.** 3.2 kB min + gzip, see [Bundle size](#bundle-size).
 
 ## Contents
 
@@ -74,7 +74,9 @@ pnpm add tidyfetch
 ```
 
 - ESM only, ES2022.
-- Browsers with `AbortSignal.any`: Chrome 116, Firefox 124, Safari 17.4. Node 20.3 or newer.
+- Browsers: Chrome 98, Firefox 97, Safari 15.4 (iOS 15.4) or newer. From these versions an aborted `AbortSignal` carries its `reason`, and a cancelled request rejects with it.
+- `AbortSignal.any` and `AbortSignal.timeout` are used where the browser has them. Where it does not, a small fallback on `AbortController` and `setTimeout` does the same job.
+- Node 20.3 or newer.
 - TypeScript 5.0 or newer for the types.
 - No dependencies.
 
@@ -444,7 +446,7 @@ await api.get("/export", { timeout: 0 }); // no timeout
 - 30 seconds by default. The client `timeout` sets it for every request, the request `timeout` for one. `0` turns it off.
 - The timeout covers sending the request and reading the body.
 - It is counted per attempt: the retry after a token refresh gets its own, and the wait for the refresh is not counted.
-- With `responseType: "stream"` it stops once the headers arrive, so a long download, server-sent events or a streamed answer are not cut off. The caller's `signal` still works.
+- With `responseType: "stream"` it stops once the headers arrive, so a long download, server-sent events or a streamed answer are not cut off. The caller's `signal` still works. In a browser without `AbortSignal.any`, this keeps one listener on the caller's `signal` until the signal aborts or is no longer used.
 - The caller's `signal` cancels the request at any point, the wait for a refresh included. The refresh itself goes on for the other requests.
 - An async check in a schema (a rare case, such as an async refinement) is not covered by the timeout or the signal.
 
@@ -619,7 +621,7 @@ The same small app in each library: a client with a base URL, a timeout and an `
 | Library       | min + gzip | Notes                                                                                             |
 | ------------- | ---------: | ------------------------------------------------------------------------------------------------- |
 | wretch        |     2.1 kB | the timeout is an addon; one error type                                                           |
-| **tidyfetch** | **3.1 kB** | shared token refresh, an error class per failure, Standard Schema, hooks; no retries, no progress |
+| **tidyfetch** | **3.2 kB** | shared token refresh, an error class per failure, Standard Schema, hooks; no retries, no progress |
 | ofetch        |     4.1 kB | automatic retries, `destr` and `ufo` for JSON and URLs; one error type                            |
 | ky            |    10.9 kB | retries with backoff, many hooks, upload and download progress, Standard Schema                   |
 | axios         |    21.9 kB | interceptors, XHR and `fetch` adapters, progress, many more options                               |

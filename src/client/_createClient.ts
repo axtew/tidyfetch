@@ -4,7 +4,7 @@ import { type HttpResponse, type RawBody, readBody, toHttpResponse } from "../re
 import { validate } from "../schema";
 import { notify } from "./_hooks";
 import { createRefresh } from "./_refresh";
-import { combineSignals, DEFAULT_TIMEOUT, startDeadline } from "./_signal";
+import { combineSignals, DEFAULT_TIMEOUT, startDeadline, throwIfAborted } from "./_signal";
 import type { ClientOptions, HttpClient, RequestOptions } from "./_types";
 
 // The DOM types lack `duplex`, which `fetch` requires for a stream body.
@@ -50,29 +50,39 @@ export function createClient(options: ClientOptions): HttpClient {
     if (body instanceof ReadableStream) init.duplex = "half";
     if (credentials !== undefined) init.credentials = credentials;
 
+    // Already cancelled (before the call, or while the headers were computed):
+    // nothing is sent and no timer is started.
+    throwIfAborted(callerSignal);
     const timeout = requestOptions.timeout ?? options.timeout ?? DEFAULT_TIMEOUT;
     const deadline = startDeadline(timeout, responseType === "stream");
-    const signal = combineSignals(callerSignal, deadline);
-    if (signal !== undefined) init.signal = signal;
+    const combined = combineSignals(callerSignal, deadline);
+    if (combined !== undefined) init.signal = combined.signal;
 
     // A copy of the headers, so that the hook cannot change what is sent.
     if (onRequest !== undefined) notify(onRequest, { method, url, headers: new Headers(headers) });
 
     let response: Response;
     let raw: RawBody;
+    // A successful stream is read by the caller after we return, and the caller's
+    // signal must still reach it. Without `AbortSignal.any` that takes our listener
+    // on the caller's signal, so it stays until that signal aborts or is garbage
+    // collected. Every other outcome takes it off here.
+    let keepCallerListener = false;
     try {
       response = await callFetch(url, init);
       raw = await readBody(response, method, responseType);
+      keepCallerListener = raw.type === "stream" && response.ok;
     } catch (error) {
       // Cancelled by the caller: theirs to handle, rethrown as their signal's reason
       // rather than turned into a library error.
-      callerSignal?.throwIfAborted();
+      throwIfAborted(callerSignal);
       if (deadline?.signal.aborted === true) {
         throw new TimeoutError({ request: httpRequest, timeout, cause: error });
       }
       throw new NetworkError({ request: httpRequest, cause: error });
     } finally {
       deadline?.stop();
+      if (!keepCallerListener) combined?.release();
     }
 
     return { result: toHttpResponse(response, httpRequest, raw), response, request: httpRequest };

@@ -1,4 +1,6 @@
-import type { FetchFunction } from "../..";
+import { vi } from "vitest";
+
+import { createClient, type FetchFunction } from "../..";
 
 export interface RecordedCall {
   url: string;
@@ -159,3 +161,64 @@ export const json = (data: unknown, status = 200): Response =>
   new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
 
 export const unauthorized = (): Response => json({ message: "token expired" }, 401);
+
+export const authOf = (request: SentRequest | undefined): string | null =>
+  request?.headers.get("authorization") ?? null;
+
+/**
+ * A bearer-token setup: the server accepts only `Bearer <valid>`, the client
+ * reads `token` at send time, and `refresh` waits for `gate` (open by default)
+ * before it puts the valid token in place and resolves with `result`.
+ */
+export function bearerSetup({
+  result = true,
+  gated = false,
+  hold,
+}: {
+  result?: boolean;
+  gated?: boolean;
+  /** Holds the answer to the matching request until the returned promise resolves. */
+  hold?: (request: SentRequest) => Promise<void> | undefined;
+} = {}) {
+  const state = { token: "old", valid: "new" };
+  const gate = deferred();
+  if (!gated) gate.resolve();
+  const refresh = vi.fn<() => Promise<boolean>>(async () => {
+    await gate.promise;
+    if (result) state.token = state.valid;
+    return result;
+  });
+  const server = fakeServer(async (request) => {
+    const ok = authOf(request) === `Bearer ${state.valid}`;
+    if (!ok) await hold?.(request);
+    return ok ? json({ url: request.url }) : unauthorized();
+  });
+  const headers = vi.fn<() => HeadersInit>(() => ({ Authorization: `Bearer ${state.token}` }));
+  const api = createClient({ baseUrl: "/api", headers, refresh, fetch: server.fetch });
+  return { api, state, gate, refresh, server, headers };
+}
+
+/** The listeners of the "abort" calls among recorded add/removeEventListener calls. */
+const abortOnly = (calls: unknown[][]): unknown[] =>
+  calls.filter(([type]) => type === "abort").map(([, listener]) => listener);
+
+/**
+ * Watches the abort listeners put on a signal: how many were added and removed,
+ * and how many of the added ones were never removed.
+ */
+export function abortListeners(signal: AbortSignal): {
+  added: () => number;
+  removed: () => number;
+  left: () => number;
+} {
+  const add = vi.spyOn(signal, "addEventListener");
+  const remove = vi.spyOn(signal, "removeEventListener");
+  return {
+    added: () => abortOnly(add.mock.calls).length,
+    removed: () => abortOnly(remove.mock.calls).length,
+    left: () => {
+      const removed = new Set(abortOnly(remove.mock.calls));
+      return abortOnly(add.mock.calls).filter((listener) => !removed.has(listener)).length;
+    },
+  };
+}
