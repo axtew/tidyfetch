@@ -45,6 +45,7 @@ try {
 - [Зачем](#зачем)
 - [Установка](#установка)
 - [Быстрый старт](#быстрый-старт)
+- [С TanStack Query и RTK Query](#с-tanstack-query-и-rtk-query)
 - [Авторизация](#авторизация)
 - [Запросы](#запросы)
 - [Ответы](#ответы)
@@ -61,9 +62,7 @@ try {
 
 ## Зачем
 
-tidyfetch вырос из HTTP-слоя рабочего приложения. Главное в нём - обновление токена: когда access-токен истекает, сразу несколько запросов получают 401, и им нужно дождаться одного обновления, а не запускать каждому своё.
-
-В первой версии здесь была ошибка. Счётчик повторов жил внутри общего promise обновления, и каждый новый запрос обнулял его для остальных. Если сервер продолжал отвечать 401, запросы повторялись бесконечно. В tidyfetch лимит принадлежит самому запросу: он повторяется не больше одного раза, а второй 401 уходит вызывающему коду.
+tidyfetch основан на HTTP-сервисе, который я написал, чтобы упростить работу с `fetch`, и использовал в своих проектах. Главное в нём - обновление токена. Когда access-токен истекает, сразу несколько запросов получают 401. Они ждут одно общее обновление, после него каждый уходит ещё раз, а если сервер снова отвечает 401, этот ответ получает вызывающий код: запросы не повторяются по кругу.
 
 Остальное - то, что любой проект рано или поздно пишет вокруг `fetch`: базовый адрес, query, заголовки, JSON, таймаут, ошибки, по которым понятно, что случилось. Тесты покрывают параллельные 401 и гонки вокруг них, а в [демо](https://tidyfetch.stevvy1122.workers.dev) видно пять запросов, пять 401 и один refresh.
 
@@ -116,6 +115,78 @@ try {
 ```
 
 При статусе 2xx запрос возвращает `{ ok, status, statusText, headers, url, data }`, при любом другом бросает ошибку. `get`, `post`, `put`, `patch` и `delete` - короткие формы `api.request(method, path, options)`; через него же отправляются `HEAD` и `OPTIONS`.
+
+## С TanStack Query и RTK Query
+
+tidyfetch отправляет запросы, а кэш, состояния загрузки и повторы остаются у библиотеки данных. Обновление токена происходит внутри клиента, поэтому ни одной из них не нужна своя обёртка для повторной авторизации.
+
+TanStack Query: верните `data` из `queryFn` и передайте `signal`, тогда отменённый запрос в TanStack Query отменит и HTTP-запрос.
+
+```ts
+import { useMutation, useQuery } from "@tanstack/react-query";
+
+import { api } from "./api";
+
+export function useUser(id: number) {
+  return useQuery({
+    queryKey: ["user", id],
+    queryFn: async ({ signal }) => (await api.get<User>(`/users/${id}`, { signal })).data,
+  });
+}
+
+export function useRenameUser() {
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: number; name: string }) =>
+      (await api.patch<User>(`/users/${id}`, { body: { name } })).data,
+  });
+}
+```
+
+`error` у запроса - один из [классов ошибок](#ошибки). Настройка `retry` на них - в разделе [Повторы](#повторы).
+
+RTK Query: `baseQuery` поверх клиента. RTK Query ждёт неудачу как возвращённый `{ error }`, а не как исключение.
+
+```ts
+import { type BaseQueryFn, createApi } from "@reduxjs/toolkit/query/react";
+import { HttpError } from "tidyfetch";
+
+import { api } from "./api";
+
+interface Args {
+  url: string;
+  method?: string;
+  body?: unknown;
+  params?: Record<string, string | number | boolean | undefined>;
+}
+
+interface Failure {
+  status: number | "FETCH_ERROR";
+  data: unknown;
+}
+
+const tidyBaseQuery: BaseQueryFn<Args, unknown, Failure> = async (
+  { url, method = "GET", body, params },
+  { signal },
+) => {
+  try {
+    const { data } = await api.request(method, url, { body, query: params, signal });
+    return { data };
+  } catch (error) {
+    if (error instanceof HttpError) return { error: { status: error.status, data: error.data } };
+    return { error: { status: "FETCH_ERROR", data: String(error) } };
+  }
+};
+
+export const usersApi = createApi({
+  baseQuery: tidyBaseQuery,
+  endpoints: (build) => ({
+    getUser: build.query<User, number>({ query: (id) => ({ url: `/users/${id}` }) }),
+    renameUser: build.mutation<User, { id: number; name: string }>({
+      query: ({ id, name }) => ({ url: `/users/${id}`, method: "PATCH", body: { name } }),
+    }),
+  }),
+});
+```
 
 ## Авторизация
 
@@ -181,7 +252,7 @@ export const api = createClient({
 });
 ```
 
-Если эндпоинт обновления отвечает ошибкой, `api.post` бросает её, и каждый ждущий запрос завершается своим 401, а эта ошибка лежит в `cause`. Значит, сессия закончилась. Чтобы отправить пользователя на страницу входа, поймайте эту ошибку внутри `refresh`, сделайте там переход и верните `false`.
+Если эндпоинт обновления отвечает ошибкой, `api.post` бросает её, и каждый ждущий запрос завершается своим 401, а эта ошибка лежит в `cause`. Значит, сессия закончилась. Чтобы отправить пользователя на страницу входа, обработайте эту ошибку внутри `refresh`: сделайте там редирект и верните `false`.
 
 ## Запросы
 
@@ -305,7 +376,7 @@ response.data; // User
 ### Тип data
 
 ```ts
-const { data: user } = await api.get<User>("/me"); // User, на ваше слово, без проверки
+const { data: user } = await api.get<User>("/me"); // User: тип задан вручную и не проверяется, как с `as`
 const { data: csv } = await api.get("/export", { responseType: "text" }); // string
 const { data: pdf } = await api.get("/report", { responseType: "blob" }); // Blob
 const { data: me } = await api.get("/me", { schema: UserSchema }); // результат схемы, проверено
@@ -451,7 +522,7 @@ const api = createClient({
 
 tidyfetch сам не повторяет неудачные запросы, и это сделано намеренно:
 
-- **Повторы перемножаются.** TanStack Query и так повторяет упавший запрос 3 раза. Если клиент добавит ещё 3 своих, один сломанный эндпоинт получит 4 x 4 = 16 запросов.
+- **Повторы перемножаются.** TanStack Query и так повторяет упавший запрос. Если и он, и клиент делают по 3 попытки, один сломанный эндпоинт получит 3 x 3 = 9 запросов.
 - **POST нельзя безопасно повторить.** Запрос может дойти до сервера и потерять ответ на обратном пути. Отправленный ещё раз, он создаст заказ дважды.
 - **Приложение знает лучше.** Какие ошибки стоит повторять, сколько ждать, показывать ли спиннер или сообщение: это зависит от экрана, а не от HTTP-клиента.
 

@@ -45,6 +45,7 @@ try {
 - [Why](#why)
 - [Install](#install)
 - [Quick start](#quick-start)
+- [With TanStack Query and RTK Query](#with-tanstack-query-and-rtk-query)
 - [Authentication](#authentication)
 - [Requests](#requests)
 - [Responses](#responses)
@@ -61,9 +62,7 @@ try {
 
 ## Why
 
-tidyfetch started as the HTTP layer of a production app. Its most important part is the token refresh: when an access token expires, several requests get 401 at once, and they should wait for one refresh instead of starting one each.
-
-The first version had a bug there. The retry counter lived inside the shared refresh promise, and every new request reset it for the others. Against a server that kept answering 401, the requests were retried forever. In tidyfetch the limit belongs to each request: it is retried at most once, and a second 401 goes to the caller.
+tidyfetch is based on an HTTP service I wrote to make working with `fetch` simpler and used in my projects. Its main part is the token refresh. When an access token expires, several requests get 401 at once. They wait for one shared refresh, then each is sent once more, and if the server answers 401 again, that answer goes to the caller: requests are never retried in a loop.
 
 The rest is what every project writes around `fetch` sooner or later: a base URL, a query string, headers, JSON, a timeout, errors that say what went wrong. The tests cover the parallel 401s and the races around them, and the [demo](https://tidyfetch.stevvy1122.workers.dev) shows five requests, five 401s and one refresh.
 
@@ -116,6 +115,78 @@ try {
 ```
 
 A request resolves with `{ ok, status, statusText, headers, url, data }` for a 2xx status and throws for anything else. `get`, `post`, `put`, `patch` and `delete` are shortcuts for `api.request(method, path, options)`; use it for `HEAD` or `OPTIONS`.
+
+## With TanStack Query and RTK Query
+
+tidyfetch sends the requests; caching, loading states and retries stay with the data library. The token refresh happens inside the client, so neither library needs its own re-auth wrapper.
+
+TanStack Query: return `data` from `queryFn` and pass the `signal`, so a cancelled query aborts its request.
+
+```ts
+import { useMutation, useQuery } from "@tanstack/react-query";
+
+import { api } from "./api";
+
+export function useUser(id: number) {
+  return useQuery({
+    queryKey: ["user", id],
+    queryFn: async ({ signal }) => (await api.get<User>(`/users/${id}`, { signal })).data,
+  });
+}
+
+export function useRenameUser() {
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: number; name: string }) =>
+      (await api.patch<User>(`/users/${id}`, { body: { name } })).data,
+  });
+}
+```
+
+`error` of the query is one of the [error classes](#errors). A `retry` setup that uses them is in [Retries](#retries).
+
+RTK Query: a `baseQuery` on top of the client. RTK Query expects a failure as a returned `{ error }`, not a throw.
+
+```ts
+import { type BaseQueryFn, createApi } from "@reduxjs/toolkit/query/react";
+import { HttpError } from "tidyfetch";
+
+import { api } from "./api";
+
+interface Args {
+  url: string;
+  method?: string;
+  body?: unknown;
+  params?: Record<string, string | number | boolean | undefined>;
+}
+
+interface Failure {
+  status: number | "FETCH_ERROR";
+  data: unknown;
+}
+
+const tidyBaseQuery: BaseQueryFn<Args, unknown, Failure> = async (
+  { url, method = "GET", body, params },
+  { signal },
+) => {
+  try {
+    const { data } = await api.request(method, url, { body, query: params, signal });
+    return { data };
+  } catch (error) {
+    if (error instanceof HttpError) return { error: { status: error.status, data: error.data } };
+    return { error: { status: "FETCH_ERROR", data: String(error) } };
+  }
+};
+
+export const usersApi = createApi({
+  baseQuery: tidyBaseQuery,
+  endpoints: (build) => ({
+    getUser: build.query<User, number>({ query: (id) => ({ url: `/users/${id}` }) }),
+    renameUser: build.mutation<User, { id: number; name: string }>({
+      query: ({ id, name }) => ({ url: `/users/${id}`, method: "PATCH", body: { name } }),
+    }),
+  }),
+});
+```
 
 ## Authentication
 
@@ -305,7 +376,7 @@ Empty bodies:
 ### Typing data
 
 ```ts
-const { data: user } = await api.get<User>("/me"); // User, as you claim, not checked
+const { data: user } = await api.get<User>("/me"); // User: set by you and not checked, like `as`
 const { data: csv } = await api.get("/export", { responseType: "text" }); // string
 const { data: pdf } = await api.get("/report", { responseType: "blob" }); // Blob
 const { data: me } = await api.get("/me", { schema: UserSchema }); // the schema's output, checked
@@ -451,7 +522,7 @@ The hooks only observe: they are not awaited, what they return is ignored, and t
 
 tidyfetch does not retry failed requests on its own, on purpose:
 
-- **Retries multiply.** TanStack Query already retries a failed query 3 times. With 3 more retries inside the client, one failing endpoint gets 4 x 4 = 16 requests.
+- **Retries multiply.** TanStack Query already retries a failed query. If both it and the client make 3 attempts, one failing endpoint gets 3 x 3 = 9 requests.
 - **A POST is not safe to repeat.** A request can reach the server and lose its response on the way back. Sent again, it creates the order twice.
 - **The app knows better.** Which errors are worth a retry, how long to wait, whether to show a spinner or a message: that depends on the screen, not on the HTTP client.
 
