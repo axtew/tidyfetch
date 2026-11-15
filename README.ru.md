@@ -76,7 +76,7 @@ pnpm add tidyfetch
 - Только ESM, ES2022.
 - Браузеры: Chrome 98, Firefox 97, Safari 15.4 (iOS 15.4) и новее. С этих версий у отменённого `AbortSignal` есть `reason`, и отменённый запрос завершается с ним.
 - Где в браузере есть `AbortSignal.any` и `AbortSignal.timeout`, используются они. Где их нет, то же самое делает небольшой запасной путь на `AbortController` и `setTimeout`.
-- Node 20.3 или новее.
+- Node 20 или новее.
 - Для типов нужен TypeScript 5.0 или новее.
 - Без зависимостей.
 

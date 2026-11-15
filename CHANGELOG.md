@@ -2,6 +2,18 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com), versions follow [semver](https://semver.org). While the version is 0.x, a minor release may change the API.
 
+## 0.2.0 - 2026-11-15
+
+Works in older browsers.
+
+- Browsers without `AbortSignal.any` are supported: Chrome 98, Firefox 97, Safari 15.4 (iOS 15.4) or newer, instead of Chrome 116, Firefox 124, Safari 17.4. Where `AbortSignal.any` is missing, the caller's signal and the timeout are joined by hand, and the listeners on the caller's signal are removed when each attempt ends. The error `AbortSignal.any is not supported here` is gone.
+- Browsers without `AbortSignal.timeout` are supported too: the timeout runs on a timer instead.
+- Node 20 or newer, instead of 20.3.
+- `TimeoutError`, `NetworkError` and a cancel by the caller are told apart the same way on both paths.
+- A request whose signal is already aborted rejects with the signal's reason without calling `fetch`, and `onRequest` is not called for it.
+- With `responseType: "stream"` in a browser without `AbortSignal.any`, one listener stays on the caller's signal while the stream may still be read, so that the signal can stop it.
+- Bundle size 3.2 kB min + gzip, up from 3.1 kB.
+
 ## 0.1.0 - 2026-11-15
 
 The first release.

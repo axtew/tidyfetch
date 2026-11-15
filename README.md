@@ -76,7 +76,7 @@ pnpm add tidyfetch
 - ESM only, ES2022.
 - Browsers: Chrome 98, Firefox 97, Safari 15.4 (iOS 15.4) or newer. From these versions an aborted `AbortSignal` carries its `reason`, and a cancelled request rejects with it.
 - `AbortSignal.any` and `AbortSignal.timeout` are used where the browser has them. Where it does not, a small fallback on `AbortController` and `setTimeout` does the same job.
-- Node 20.3 or newer.
+- Node 20 or newer.
 - TypeScript 5.0 or newer for the types.
 - No dependencies.
 
